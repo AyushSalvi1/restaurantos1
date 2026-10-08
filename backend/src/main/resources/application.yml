@@ -1,0 +1,120 @@
+spring:
+  application:
+    name: lifeos-backend
+  profiles:
+    default: dev
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+  mvc:
+    problemdetails:
+      enabled: false
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+  cache:
+    type: none
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+    include-exception: false
+  shutdown: graceful
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+
+springdoc:
+  api-docs:
+    path: /api/v3/api-docs
+  swagger-ui:
+    path: /api/docs
+    operations-sorter: alpha
+    tags-sorter: alpha
+  default-produces-media-type: application/json
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  health:
+    mail:
+      enabled: false
+
+logging:
+  level:
+    root: INFO
+    com.lifeos: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} - %msg%n"
+
+lifeos:
+  app:
+    base-url: ${APP_BASE_URL:http://localhost:5173}
+    cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:4173}
+    seed-data-enabled: ${SEED_DATA_ENABLED:false}
+    demo-mode: ${DEMO_MODE:false}
+    # Only read when seeding is on. The demo account is a local convenience; never point it at real data.
+    seed-email: ${SEED_EMAIL:demo@lifeos.app}
+    seed-password: ${SEED_PASSWORD:Demo-LifeOS-2024}
+  jwt:
+    # Override in every deployed environment. The app refuses to boot with the default value in the prod profile.
+    secret: ${JWT_SECRET:}
+    issuer: ${JWT_ISSUER:lifeos}
+    access-token-ttl: ${JWT_ACCESS_TTL:PT15M}
+    refresh-token-ttl: ${JWT_REFRESH_TTL:P30D}
+  ai:
+    provider: ${AI_PROVIDER:heuristic}
+    request-timeout: ${AI_REQUEST_TIMEOUT:PT60S}
+    gemini:
+      base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+      api-key: ${GEMINI_API_KEY:}
+      model: ${GEMINI_MODEL:gemini-2.0-flash}
+      embedding-model: ${GEMINI_EMBEDDING_MODEL:text-embedding-004}
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-4o-mini}
+      embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      model: ${OLLAMA_MODEL:llama3.1}
+      embedding-model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
+  storage:
+    root: ${STORAGE_ROOT:./data/storage}
+    knowledge-dir: ${KNOWLEDGE_DIR:./data/knowledge}
+    export-dir: ${EXPORT_DIR:./data/exports}
+    max-knowledge-file-bytes: ${MAX_KNOWLEDGE_FILE_BYTES:15728640}
+    allowed-knowledge-extensions: txt,md,markdown,pdf,docx
+  scheduler:
+    enabled: ${SCHEDULER_ENABLED:true}
+  redis:
+    enabled: ${REDIS_ENABLED:false}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    auth-attempts-per-window: ${AUTH_ATTEMPTS_PER_WINDOW:10}
+    window: PT10M
+    ai-requests-per-minute: ${AI_REQUESTS_PER_MINUTE:30}
+  vector:
+    dimensions: ${VECTOR_DIMENSIONS:384}

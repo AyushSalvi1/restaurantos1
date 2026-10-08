@@ -1,0 +1,9 @@
+target/
+data/
+.mvn/
+mvnw
+mvnw.cmd
+*.log
+.git/
+.github/
+docs/

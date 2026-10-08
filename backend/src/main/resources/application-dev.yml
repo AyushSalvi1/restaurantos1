@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    # Zero-dependency local profile. docker-compose / staging / prod use the mysql profile.
+    url: jdbc:h2:mem:lifeos;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 30
+        order_inserts: true
+        order_updates: true
+        type:
+          preferred_uuid_jdbc_type: VARCHAR
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/common
+    baseline-on-migrate: true
+
+lifeos:
+  app:
+    seed-data-enabled: ${SEED_DATA_ENABLED:true}

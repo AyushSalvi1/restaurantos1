@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  backend:
+    name: Backend build and test
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: lifeos_test
+          MYSQL_USER: lifeos
+          MYSQL_PASSWORD: lifeos
+          MYSQL_ROOT_PASSWORD: lifeos-root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -plifeos-root"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify the portable H2 profile
+        run: mvn -B verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-reports
+          path: backend/target/surefire-reports/
+          retention-days: 7
+
+  mysql-migrations:
+    name: MySQL migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: lifeos
+          MYSQL_USER: lifeos
+          MYSQL_PASSWORD: lifeos
+          MYSQL_ROOT_PASSWORD: lifeos-root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -plifeos-root"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Package
+        run: mvn -B -q clean package -DskipTests
+
+      # The prod profile is the one that adds db/migration/mysql, so it is the only way to prove the
+      # MySQL-only full-text indexes and column definitions apply against a real MySQL server.
+      - name: Boot against MySQL and wait for migrations
+        env:
+          SPRING_PROFILES_ACTIVE: prod
+          SPRING_DATASOURCE_URL: jdbc:mysql://127.0.0.1:3306/lifeos?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+          SPRING_DATASOURCE_USERNAME: lifeos
+          SPRING_DATASOURCE_PASSWORD: lifeos
+          JWT_SECRET: ci-only-secret-not-used-by-anyone-0123456789
+          SCHEDULER_ENABLED: 'false'
+          REDIS_ENABLED: 'false'
+        run: |
+          java -jar target/*.jar > app.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health/readiness > /dev/null; then
+              echo "Backend became ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become ready"
+          cat app.log
+          exit 1
+
+      - name: Show the applied migration history
+        if: always()
+        run: |
+          docker run --rm --network host mysql:8.4 \
+            mysql -h 127.0.0.1 -u root -plifeos-root lifeos \
+            -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank;"
+
+      - name: Upload the boot log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-boot-log
+          path: backend/app.log
+          retention-days: 7
+
+  frontend:
+    name: Frontend typecheck, lint and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.app.json --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  compose:
+    name: Compose config and image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        env:
+          JWT_SECRET: ci-placeholder-secret-value-not-used-anywhere
+        run: docker compose config --quiet
+
+      - name: Build backend image
+        run: docker build -t lifeos-backend:ci ./backend
+
+      - name: Build frontend image
+        run: docker build -t lifeos-frontend:ci ./frontend

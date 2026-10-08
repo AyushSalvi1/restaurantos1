@@ -1,0 +1,136 @@
+name: lifeos
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lifeos}
+      MYSQL_USER: ${MYSQL_USER:-lifeos}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lifeos}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-lifeos-root}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-lifeos-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks: [lifeos]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # Sessions, refresh tokens and rate-limit counters live here. Without Redis the app falls back to
+    # in-memory state, which is fine for a single node but not for a rolling restart.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [lifeos]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-lifeos}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-lifeos}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-lifeos}
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Must be at least 32 bytes of base64/hex entropy. The app refuses to start without it in prod.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env - at least 32 bytes}
+      JWT_ISSUER: ${JWT_ISSUER:-lifeos}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8081}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
+      STORAGE_ROOT: /app/data/storage
+      KNOWLEDGE_DIR: /app/data/knowledge
+      EXPORT_DIR: /app/data/exports
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SEED_DATA_ENABLED: ${SEED_DATA_ENABLED:-false}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-heuristic}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      MAIL_HOST: ${MAIL_HOST:-localhost}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+    volumes:
+      - app-data:/app/data
+ports:
+        # nginx proxies /api and /ws to the backend, so the browser only ever sees this origin and the
+        # backend does not need to be published at all. It stays reachable for direct API tooling.
+        - "${BACKEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:8080/actuator/health/readiness | grep -q UP"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks: [lifeos]
+
+  # Optional: set AI_PROVIDER=ollama and this service starts a local model server.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ["ollama"]
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    networks: [lifeos]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_WS_URL: ""
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+ports:
+        - "${FRONTEND_PORT:-8081}:80"
+    networks: [lifeos]
+
+  # Development convenience only: a web UI on the SMTP port so password-reset links can be read.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    profiles: ["mail"]
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    networks: [lifeos]
+
+volumes:
+  mysql-data:
+  redis-data:
+  app-data:
+  ollama-data:
+
+networks:
+  lifeos:
+    driver: bridge
